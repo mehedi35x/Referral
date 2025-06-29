@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>আপনার রেফারেল অ্যাকাউন্ট</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5; /* Light gray background */
+        }
+        /* Custom scrollbar for better aesthetics */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #e0e0e0;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        /* React root div styling */
+        #root {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+
+        /* Custom animations for modals */
+        @keyframes fadeInScaleUp {
+            from {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+        .animate-fade-in-up {
+            animation: fadeInScaleUp 0.3s ease-out forwards;
+        }
+    </style>
+    <!-- React and ReactDOM CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX transformation in browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Firebase JS SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import {
+            getAuth,
+            signInWithEmailAndPassword,
+            createUserWithEmailAndPassword,
+            onAuthStateChanged,
+            signOut,
+            updateProfile,
+            signInWithCustomToken, // Ensure this is imported
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import {
+            getFirestore,
+            doc,
+            setDoc,
+            collection,
+            addDoc,
+            serverTimestamp,
+            onSnapshot,
+            runTransaction,
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose Firebase modules to global scope for Babel-transformed React code
+        window.firebase = {
+            initializeApp,
+            getAuth,
+            signInWithEmailAndPassword,
+            createUserWithEmailAndPassword,
+            onAuthStateChanged,
+            signOut,
+            updateProfile,
+            signInWithCustomToken,
+            getFirestore,
+            doc,
+            setDoc,
+            collection,
+            addDoc,
+            serverTimestamp,
+            onSnapshot,
+            runTransaction,
+        };
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, createContext, useContext } = React;
+        const {
+            initializeApp,
+            getAuth,
+            signInWithEmailAndPassword,
+            createUserWithEmailAndPassword,
+            onAuthStateChanged,
+            signOut,
+            updateProfile,
+            signInWithCustomToken, // Destructure from window.firebase
+            getFirestore,
+            doc,
+            setDoc,
+            collection,
+            addDoc,
+            serverTimestamp,
+            onSnapshot,
+            runTransaction,
+        } = window.firebase; // Access Firebase functions from global scope
+
+        // Global variables (from Canvas environment, must be declared in the HTML context)
+        // These will be defined by the Canvas runtime. If running locally, you might need to mock them.
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+
+        // Initialize Firebase (only if not already initialized, to avoid errors)
+        let appInstance;
+        try {
+            appInstance = initializeApp(firebaseConfig);
+        } catch (error) {
+            if (!error.message.includes("already exists")) {
+                console.error("Firebase initialization error:", error);
+            }
+            // If it already exists, just get the existing app
+            if (firebase.getApps().length > 0) {
+                appInstance = firebase.getApp();
+            } else {
+                console.error("Failed to initialize Firebase and no existing app found.");
+                // Fallback for extreme cases, though normally `initializeApp` would handle it or throw
+            }
+        }
+
+        const auth = getAuth(appInstance);
+        const db = getFirestore(appInstance);
+
+        // Context for Firebase and User state
+        const FirebaseContext = createContext(null);
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [currentPage, setCurrentPage] = useState('login'); // 'login', 'register', 'dashboard'
+            const [message, setMessage] = useState(''); // For displaying general messages
+            const [messageType, setMessageType] = useState(''); // 'success' or 'error'
+
+            useEffect(() => {
+                const signInInitialUser = async () => {
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        }
+                    } catch (error) {
+                        console.error("Firebase initial custom token sign-in error:", error);
+                    } finally {
+                        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+                            setUser(currentUser);
+                            setLoading(false);
+                            if (currentUser) {
+                                setCurrentPage('dashboard');
+                            } else {
+                                setCurrentPage('login');
+                            }
+                        });
+                        return () => unsubscribe();
+                    }
+                };
+                signInInitialUser();
+            }, []);
+
+            const showMessage = (msg, type) => {
+                setMessage(msg);
+                setMessageType(type);
+                setTimeout(() => {
+                    setMessage('');
+                    setMessageType('');
+                }, 3000);
+            };
+
+            if (loading) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+                        <div className="text-gray-700 text-lg font-semibold">লোড হচ্ছে...</div>
+                    </div>
+                );
+            }
+
+            const renderPage = () => {
+                switch (currentPage) {
+                    case 'login':
+                        return <LoginPage setCurrentPage={setCurrentPage} showMessage={showMessage} />;
+                    case 'register':
+                        return <RegisterPage setCurrentPage={setCurrentPage} showMessage={showMessage} />;
+                    case 'dashboard':
+                        return <DashboardPage user={user} showMessage={showMessage} />;
+                    default:
+                        return <LoginPage setCurrentPage={setCurrentPage} showMessage={showMessage} />;
+                }
+            };
+
+            return (
+                <FirebaseContext.Provider value={{ db, auth, appId, user }}>
+                    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 p-4">
+                        {message && (
+                            <div className={`fixed top-4 right-4 p-3 rounded-lg shadow-md z-50 ${messageType === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
+                                {message}
+                            </div>
+                        )}
+                        {renderPage()}
+                    </div>
+                </FirebaseContext.Provider>
+            );
+        };
+
+        const LoginPage = ({ setCurrentPage, showMessage }) => {
+            const [phoneNumber, setPhoneNumber] = useState('');
+            const [password, setPassword] = useState('');
+            const [loadingLogin, setLoadingLogin] = useState(false);
+
+            const handleLogin = async (e) => {
+                e.preventDefault();
+                setLoadingLogin(true);
+                const emailAlias = `${phoneNumber}@example.com`;
+                try {
+                    await signInWithEmailAndPassword(auth, emailAlias, password);
+                    showMessage('লগইন সফল!', 'success');
+                } catch (error) {
+                    showMessage(`লগইন ব্যর্থ: ${error.message}`, 'error');
+                    console.error("Login error:", error);
+                } finally {
+                    setLoadingLogin(false);
+                }
+            };
+
+            return (
+                <div className="bg-white p-6 md:p-8 rounded-lg shadow-xl max-w-sm w-full text-center space-y-6 border border-gray-200">
+                    <h2 className="text-2xl font-bold text-gray-800">লগইন করুন</h2>
+                    <form onSubmit={handleLogin} className="space-y-4">
+                        <input
+                            type="tel"
+                            placeholder="ফোন নম্বর (যেমন: 01XXXXXXXXX)"
+                            className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            value={phoneNumber}
+                            onChange={(e) => setPhoneNumber(e.target.value)}
+                            required
+                        />
+                        <input
+                            type="password"
+                            placeholder="পাসওয়ার্ড"
+                            className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            required
+                        />
+                        <button
+                            type="submit"
+                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-md shadow-md transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-blue-300"
+                            disabled={loadingLogin}
+                        >
+                            {loadingLogin ? 'লগইন হচ্ছে...' : 'লগইন'}
+                        </button>
+                    </form>
+                    <p className="text-gray-600">
+                        কোনো অ্যাকাউন্ট নেই?{' '}
+                        <button
+                            onClick={() => setCurrentPage('register')}
+                            className="text-blue-600 hover:underline font-medium"
+                        >
+                            রেজিস্টার করুন
+                        </button>
+                    </p>
+                </div>
+            );
+        };
+
+        const RegisterPage = ({ setCurrentPage, showMessage }) => {
+            const { db, appId } = useContext(FirebaseContext);
+            const [phoneNumber, setPhoneNumber] = useState('');
+            const [password, setPassword] = useState('');
+            const [confirmPassword, setConfirmPassword] = useState('');
+            const [loadingRegister, setLoadingRegister] = useState(false);
+            const [showBonusModal, setShowBonusModal] = useState(false);
+
+            const handleRegister = async (e) => {
+                e.preventDefault();
+                if (password !== confirmPassword) {
+                    showMessage('পাসওয়ার্ড মিলছে না!', 'error');
+                    return;
+                }
+                if (phoneNumber.length < 11 || !/^\d+$/.test(phoneNumber)) {
+                    showMessage('বৈধ ফোন নম্বর দিন।', 'error');
+                    return;
+                }
+
+                setLoadingRegister(true);
+                const emailAlias = `${phoneNumber}@example.com`;
+
+                try {
+                    const userCredential = await createUserWithEmailAndPassword(auth, emailAlias, password);
+                    const user = userCredential.user;
+
+                    await updateProfile(user, { displayName: phoneNumber });
+
+                    const userDataRef = doc(db, `artifacts/${appId}/users/${user.uid}/user_data/profile`);
+                    await setDoc(userDataRef, {
+                        phoneNumber: phoneNumber,
+                        balance: 10.00,
+                        referralCount: 0,
+                        successfulReferrals: 0,
+                        createdAt: serverTimestamp(),
+                    }, { merge: true });
+
+                    showMessage('রেজিস্ট্রেশন সফল! আপনি এখন লগইন করতে পারেন।', 'success');
+                    setShowBonusModal(true);
+                } catch (error) {
+                    let errorMessage = error.message;
+                    if (error.code === 'auth/email-already-in-use') {
+                        errorMessage = 'এই ফোন নম্বর দিয়ে অ্যাকাউন্টটি ইতিমধ্যেই ব্যবহার করা হয়েছে।';
+                    }
+                    showMessage(`রেজিস্ট্রেশন ব্যর্থ: ${errorMessage}`, 'error');
+                    console.error("Registration error:", error);
+                } finally {
+                    setLoadingRegister(false);
+                }
+            };
+
+            return (
+                <div className="bg-white p-6 md:p-8 rounded-lg shadow-xl max-w-sm w-full text-center space-y-6 border border-gray-200">
+                    <h2 className="text-2xl font-bold text-gray-800">রেজিস্টার করুন</h2>
+                    <form onSubmit={handleRegister} className="space-y-4">
+                        <input
+                            type="tel"
+                            placeholder="ফোন নম্বর (যেমন: 01XXXXXXXXX)"
+                            className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                            value={phoneNumber}
+                            onChange={(e) => setPhoneNumber(e.target.value)}
+                            required
+                        />
+                        <input
+                            type="password"
+                            placeholder="পাসওয়ার্ড"
+                            className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            required
+                        />
+                        <input
+                            type="password"
+                            placeholder="পাসওয়ার্ড নিশ্চিত করুন"
+                            className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            required
+                        />
+                        <button
+                            type="submit"
+                            className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-md shadow-md transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-green-300"
+                            disabled={loadingRegister}
+                        >
+                            {loadingRegister ? 'রেজিস্টার হচ্ছে...' : 'রেজিস্টার'}
+                        </button>
+                    </form>
+                    <p className="text-gray-600">
+                        ইতিমধ্যে একটি অ্যাকাউন্ট আছে?{' '}
+                        <button
+                            onClick={() => setCurrentPage('login')}
+                            className="text-blue-600 hover:underline font-medium"
+                        >
+                            লগইন করুন
+                        </button>
+                    </p>
+                    {showBonusModal && (
+                        <BonusCongratulationModal onClose={() => { setShowBonusModal(false); setCurrentPage('login'); }} />
+                    )}
+                </div>
+            );
+        };
+
+        const DashboardPage = ({ user, showMessage }) => {
+            const { db, appId } = useContext(FirebaseContext);
+            const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+            const [balance, setBalance] = useState(0.00);
+            const [showBalance, setShowBalance] = useState(false);
+            const [referralCount, setReferralCount] = useState(0);
+            const [successfulReferrals, setSuccessfulReferrals] = useState(0);
+
+            const userPhoneNumber = user?.displayName || user?.uid;
+            const referralCode = user?.uid ? user.uid.substring(0, 8) : 'guest';
+            const referralLink = `https://example.com/ref?code=${referralCode}`;
+
+            useEffect(() => {
+                if (!user || !db) return;
+
+                const userProfileRef = doc(db, `artifacts/${appId}/users/${user.uid}/user_data/profile`);
+                const unsubscribe = onSnapshot(userProfileRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        setBalance(data.balance || 0.00);
+                        setReferralCount(data.referralCount || 0);
+                        setSuccessfulReferrals(data.successfulReferrals || 0);
+                    } else {
+                        console.warn("User profile not found. Initializing with default values.");
+                        setBalance(0.00);
+                        setReferralCount(0);
+                        setSuccessfulReferrals(0);
+                        setDoc(userProfileRef, {
+                            phoneNumber: userPhoneNumber,
+                            balance: 0.00,
+                            referralCount: 0,
+                            successfulReferrals: 0,
+                            createdAt: serverTimestamp(),
+                        }, { merge: true }).catch(err => console.error("Error initializing user profile:", err));
+                    }
+                }, (error) => {
+                    console.error("Error fetching user profile:", error);
+                    showMessage("ব্যালেন্স লোড করতে সমস্যা হয়েছে।", "error");
+                });
+
+                return () => unsubscribe();
+            }, [user, db, appId, userPhoneNumber, showMessage]);
+
+            const copyToClipboard = () => {
+                const referralLinkInput = document.getElementById('referralLink');
+                if (referralLinkInput) {
+                    referralLinkInput.select();
+                    document.execCommand('copy');
+                    showMessage('রেফারেল লিঙ্ক কপি করা হয়েছে!', 'success');
+                }
+            };
+
+            const handleLogout = async () => {
+                try {
+                    await signOut(auth);
+                    showMessage('সফলভাবে লগআউট করা হয়েছে।', 'success');
+                } catch (error) {
+                    showMessage(`লগআউট ব্যর্থ: ${error.message}`, 'error');
+                    console.error("Logout error:", error);
+                }
+            };
+
+            return (
+                <div className="bg-white p-4 md:p-6 rounded-xl shadow-lg max-w-xl w-full space-y-5 border border-gray-200">
+                    <div className="text-sm text-gray-500 text-center mb-2 break-words">
+                        আপনার ফোন নম্বর: <span className="font-mono font-bold text-gray-700">{userPhoneNumber}</span>
+                    </div>
+
+                    <h1 className="text-xl md:text-2xl font-bold text-gray-800 text-center mb-4">
+                        আপনার রেফারেল অ্যাকাউন্ট
+                    </h1>
+
+                    <div className="bg-gradient-to-r from-[#6c46e3] to-[#af85f2] rounded-lg p-5 text-white shadow-md">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-sm md:text-base">আপনার ব্যালেন্স</span>
+                            <span className="text-sm md:text-base">৳ টাকা</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <span className="text-4xl md:text-5xl font-extrabold mb-1 flex items-center">
+                                ৳ {showBalance ? balance.toFixed(2) : '••••••'}
+                                <button onClick={() => setShowBalance(!showBalance)} className="ml-3 p-1 rounded-full text-white bg-white bg-opacity-20 hover:bg-opacity-30 transition">
+                                    {showBalance ? (
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M3.981 8.75C.997 10.364 2.378 13.9 4.862 16.248c2.483 2.347 6.136 2.651 8.841 1.055a8.775 8.775 0 005.659-6.903c.155-1.171-.038-2.348-.607-3.411L15.362 1.63a8.924 8.924 0 00-6.115-2.071c-2.404.095-4.708 1.15-6.524 2.924L3.981 8.75z" />
+                                        </svg>
+                                    ) : (
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                        </svg>
+                                    )}
+                                </button>
+                            </span>
+                            <button
+                                onClick={() => setShowWithdrawModal(true)}
+                                className="bg-white text-purple-700 font-semibold py-2 px-4 rounded-full shadow-md transition duration-300 ease-in-out hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-white"
+                            >
+                                উইথড্র করুন
+                            </button>
+                        </div>
+                        <div className="text-xs opacity-80 mt-1">
+                            সর্বশেষ আপডেট: আজ
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-lg p-5 shadow-md border border-gray-200">
+                        <h2 className="text-lg md:text-xl font-semibold text-gray-800 mb-4">আপনার রেফারেল তথ্য</h2>
+                        <div className="flex justify-between items-center mb-3">
+                            <span className="text-gray-600 text-sm md:text-base">মোট রেফারেল</span>
+                            <span className="font-bold text-gray-800 text-sm md:text-base">{referralCount}</span>
+                        </div>
+                        <div className="flex justify-between items-center mb-4">
+                            <span className="text-gray-600 text-sm md:text-base">সফল রেফারেল</span>
+                            <span className="font-bold text-green-600 text-sm md:text-base">{successfulReferrals}</span>
+                        </div>
+
+                        <div className="flex items-center bg-gray-100 rounded-lg p-2 pr-0 mb-2">
+                            <input type="text" id="referralLink" value={referralLink}
+                                   className="flex-grow bg-transparent outline-none text-gray-700 text-sm md:text-base px-2 py-1" readOnly />
+                            <button onClick={copyToClipboard} className="bg-gray-200 p-2 rounded-r-lg focus:outline-none flex items-center justify-center h-full hover:bg-gray-300 transition duration-200">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                                    <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+                                </svg>
+                            </button>
+                        </div>
+                        <p className="text-gray-500 text-xs md:text-sm text-center">
+                            এই লিঙ্ক শেয়ার করে আপনার রেফারেল বাড়ান
+                        </p>
+                    </div>
+
+                    <div className="bg-white rounded-lg p-5 shadow-md border border-gray-200">
+                        <h2 className="text-lg md:text-xl font-semibold text-gray-800 mb-4">সাম্প্রতিক রেফারেল</h2>
+
+                        <div className="flex justify-between items-center py-2 border-b border-gray-100 last:border-b-0">
+                            <div>
+                                <p className="font-medium text-gray-700">রহিম</p>
+                                <p className="text-gray-500 text-sm">২ দিন আগে</p>
+                            </div>
+                            <span className="bg-green-100 text-green-700 text-xs font-semibold px-2.5 py-0.5 rounded-full">সফল</span>
+                        </div>
+
+                        <div className="flex justify-between items-center py-2 border-b border-gray-100 last:border-b-0">
+                            <div>
+                                <p className="font-medium text-gray-700">করিম</p>
+                                <p className="text-gray-500 text-sm">৫ দিন আগে</p>
+                            </div>
+                            <span className="bg-green-100 text-green-700 text-xs font-semibold px-2.5 py-0.5 rounded-full">সফল</span>
+                        </div>
+
+                        <div className="flex justify-between items-center py-2 last:border-b-0">
+                            <div>
+                                <p className="font-medium text-gray-700">জাবেদ</p>
+                                <p className="text-gray-500 text-sm">১ সপ্তাহ আগে</p>
+                            </div>
+                            <span className="bg-yellow-100 text-yellow-700 text-xs font-semibold px-2.5 py-0.5 rounded-full">অপেক্ষাধীন</span>
+                        </div>
+                    </div>
+
+                    <div className="mt-6 text-center">
+                        <button className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-blue-300 flex items-center justify-center mx-auto">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.188a8.001 8.001 0 000 11.624V17a1 1 0 11-2 0v-1.188a8.001 8.001 0 000-11.624V3a1 1 0 011-1zm12 0a1 1 0 011 1v1.188a8.001 8.001 0 000 11.624V17a1 1 0 11-2 0v-1.188a8.001 8.001 0 000-11.624V3a1 1 0 011-1z" clipRule="evenodd" />
+                                <path fillRule="evenodd" d="M10 2a8 8 0 00-8 8c0 4.418 3.582 8 8 8a8 8 0 008-8 1 1 0 11-2 0 6 6 0 10-6 6c-3.314 0-6-2.686-6-6a6 6 0 006-6V2z" clipRule="evenodd" />
+                            </svg>
+                            রিফ্রেশ করুন
+                        </button>
+                    </div>
+
+                    <div className="mt-6 text-center">
+                        <button
+                            onClick={handleLogout}
+                            className="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-full shadow-md transition duration-300 ease-in-out focus:outline-none focus:ring-4 focus:ring-red-300"
+                        >
+                            লগআউট করুন
+                        </button>
+                    </div>
+
+                    {showWithdrawModal && (
+                        <WithdrawModal
+                            onClose={() => setShowWithdrawModal(false)}
+                            userId={user?.uid}
+                            userBalance={balance}
+                            showMessage={showMessage}
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        const WithdrawModal = ({ onClose, userId, userBalance, showMessage }) => {
+            const { db, appId } = useContext(FirebaseContext);
+            const [bkashNumber, setBkashNumber] = useState('');
+            const [withdrawalAmount, setWithdrawalAmount] = useState('');
+            const [internalMessage, setInternalMessage] = useState('');
+            const [loadingWithdrawal, setLoadingWithdrawal] = useState(false);
+            const [showWithdrawSuccessModal, setShowWithdrawSuccessModal] = useState(false);
+
+            const MIN_WITHDRAWAL_AMOUNT = 1000;
+
+            const handleConfirmWithdrawal = async () => {
+                const amountToWithdraw = parseFloat(withdrawalAmount);
+
+                if (!bkashNumber || bkashNumber.length < 11 || !/^\d+$/.test(bkashNumber)) {
+                    setInternalMessage('বৈধ bKash নম্বর দিন।');
+                    return;
+                }
+                if (isNaN(amountToWithdraw) || amountToWithdraw <= 0) {
+                    setInternalMessage('বৈধ টাকার পরিমাণ দিন।');
+                    return;
+                }
+                if (amountToWithdraw < MIN_WITHDRAWAL_AMOUNT) {
+                    setInternalMessage(`সর্বনিম্ন উইথড্রয়াল পরিমাণ ৳ ${MIN_WITHDRAWAL_AMOUNT} টাকা।`);
+                    return;
+                }
+                if (amountToWithdraw > userBalance) {
+                    setInternalMessage('আপনার ব্যালেন্সে যথেষ্ট টাকা নেই।');
+                    return;
+                }
+
+                setLoadingWithdrawal(true);
+                setInternalMessage('');
+
+                try {
+                    const userProfileRef = doc(db, `artifacts/${appId}/users/${userId}/user_data/profile`);
+                    await runTransaction(db, async (transaction) => {
+                        const userProfileDoc = await transaction.get(userProfileRef);
+
+                        if (!userProfileDoc.exists()) {
+                            throw "ব্যবহারকারীর প্রোফাইল ডেটা পাওয়া যায়নি!";
+                        }
+
+                        const currentBalance = userProfileDoc.data().balance || 0;
+
+                        if (currentBalance < amountToWithdraw) {
+                            throw "আপনার ব্যালেন্সে যথেষ্ট টাকা নেই।";
+                        }
+
+                        const newBalance = currentBalance - amountToWithdraw;
+                        transaction.update(userProfileRef, { balance: newBalance });
+
+                        const withdrawalRequestsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/withdrawalRequests`);
+                        transaction.set(doc(withdrawalRequestsCollectionRef), {
+                            bkashNumber: bkashNumber,
+                            amount: amountToWithdraw,
+                            timestamp: serverTimestamp(),
+                            status: 'pending',
+                            userId: userId,
+                        });
+                    });
+
+                    setShowWithdrawSuccessModal(true);
+                    showMessage('উইথড্রয়াল অনুরোধ সফল হয়েছে!', 'success');
+                    setBkashNumber('');
+                    setWithdrawalAmount('');
+                    onClose();
+
+                } catch (error) {
+                    console.error("Error submitting withdrawal request:", error);
+                    setInternalMessage(`উইথড্রয়াল ব্যর্থ: ${error.message}`);
+                    showMessage('উইথড্রয়াল অনুরোধ ব্যর্থ হয়েছে!', 'error');
+                } finally {
+                    setLoadingWithdrawal(false);
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full relative">
+                        <h3 className="text-xl font-bold text-gray-800 mb-4 text-center">উইথড্র করুন</h3>
+                        <div className="mb-4">
+                            <label htmlFor="withdrawalAmount" className="block text-gray-700 text-sm font-semibold mb-2">
+                                উইথড্র করার পরিমাণ (সর্বনিম্ন ৳ {MIN_WITHDRAWAL_AMOUNT}):
+                            </label>
+                            <input
+                                type="number"
+                                id="withdrawalAmount"
+                                placeholder="পরিমাণ"
+                                className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                value={withdrawalAmount}
+                                onChange={(e) => setWithdrawalAmount(e.target.value)}
+                                required
+                                min={MIN_WITHDRAWAL_AMOUNT}
+                            />
+                        </div>
+                        <div className="mb-4">
+                            <label htmlFor="bkashNumber" className="block text-gray-700 text-sm font-semibold mb-2">
+                                আপনার bKash নম্বর দিন:
+                            </label>
+                            <input
+                                type="tel"
+                                id="bkashNumber"
+                                placeholder="01XXXXXXXXX"
+                                className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                value={bkashNumber}
+                                onChange={(e) => setBkashNumber(e.target.value)}
+                                required
+                            />
+                        </div>
+
+                        {internalMessage && (
+                            <p className="text-sm text-center text-red-600 mb-4">{internalMessage}</p>
+                        )}
+
+                        <div className="flex justify-end space-x-3">
+                            <button
+                                onClick={onClose}
+                                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-md transition duration-300 ease-in-out"
+                            >
+                                বাতিল করুন
+                            </button>
+                            <button
+                                onClick={handleConfirmWithdrawal}
+                                className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-md shadow-md transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-green-300"
+                                disabled={loadingWithdrawal}
+                            >
+                                {loadingWithdrawal ? 'অনুরোধ করা হচ্ছে...' : 'উইথড্রয়াল নিশ্চিত করুন'}
+                            </button>
+                        </div>
+                    </div>
+                    {showWithdrawSuccessModal && (
+                        <WithdrawSuccessModal onClose={() => setShowWithdrawSuccessModal(false)} />
+                    )}
+                </div>
+            );
+        };
+
+        const BonusCongratulationModal = ({ onClose }) => {
+            return (
+                <div className="fixed inset-0 bg-gradient-to-br from-purple-600 to-indigo-800 bg-opacity-70 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center transform scale-105 animate-fade-in-up">
+                        <div className="text-6xl mb-6 flex justify-center items-center">
+                            <span role="img" aria-label="party-popper">🎉</span>
+                        </div>
+                        <h3 className="text-3xl font-extrabold text-gray-900 mb-3 leading-tight">
+                            অভিনন্দন!
+                        </h3>
+                        <p className="text-lg text-gray-700 mb-6">
+                            আপনার অ্যাকাউন্টে ৳ ১০.০০ বোনাস যোগ করা হয়েছে!
+                        </p>
+                        <button
+                            onClick={onClose}
+                            className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-110 focus:outline-none focus:ring-4 focus:ring-purple-300"
+                        >
+                            বন্ধ করুন
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        const WithdrawSuccessModal = ({ onClose }) => {
+            return (
+                <div className="fixed inset-0 bg-gradient-to-br from-green-500 to-teal-700 bg-opacity-70 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center transform scale-105 animate-fade-in-up">
+                        <div className="text-6xl mb-6 flex justify-center items-center">
+                            <span role="img" aria-label="money-bag">💰</span>
+                        </div>
+                        <h3 className="text-3xl font-extrabold text-gray-900 mb-3 leading-tight">
+                            উইথড্রয়াল অনুরোধ সফল!
+                        </h3>
+                        <p className="text-lg text-gray-700 mb-6">
+                            আপনার উইথড্রয়াল অনুরোধ সফলভাবে গৃহীত হয়েছে। আপনি আগামী 5 কার্যদিবসের মধ্যে আপনার পেমেন্ট পেয়ে যাবেন। ধন্যবাদ!
+                        </p>
+                        <button
+                            onClick={onClose}
+                            className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-110 focus:outline-none focus:ring-4 focus:ring-green-300"
+                        >
+                            ঠিক আছে
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
